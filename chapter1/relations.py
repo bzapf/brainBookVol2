@@ -1,15 +1,42 @@
 import numpy as np
-import pickle
+import matplotlib.pyplot as plt
+
 
 MAX_T1_IN_SECONDS = 10.
 IGNORE_NUMPY_DIVISION_WARNING = True
-USE_SPLINES = False
+A = 0.95089378
+B = 1.48087682
+
+def lookup(T1):
+
+    n  = 116
+    m  = 232 
+    Tb = 5.199
+
+    # OPTION 1
+    #Ta = 853
+
+    # OPTION 2
+    Ta = 255. #- Tb*(n-1) => 853-Tb(n-1) = 255
+    TR = 3000.
+    Tw = TR -Ta - (m-1)*Tb
+
+    #MO= 1 
+    def Mn(T1):
+        alpha = np.cos( np.deg2rad(8) ) 
+        delta = np.exp( -Tw/T1)
+        beta  = np.exp( -Tb/T1)
+        gamma = np.exp( -Ta/T1)
+        rho   = np.exp( -TR/T1)
+
+        Meq =  -(1.-delta + delta*alpha*(1.-beta)*(1.-(alpha*beta)**(m-1) )/(1.-alpha*beta ) + delta*alpha*(alpha*beta)**(m-1) - rho*alpha**m )/ (1.+rho*alpha**m)
+
+        return (1.-beta)*(1. - (alpha*beta)**(n-1) ) /(1.-alpha*beta)  + (alpha*beta)**(n-1)*(1.-gamma) + gamma*(alpha*beta)**(n-1)*Meq 
 
 
-def check_T1(T1, mask):
-
-    if mask is not None:
-        assert np.max(T1 * mask) < MAX_T1_IN_SECONDS
+    SIs = Mn(T1)
+    # plt.clf()
+    return T1, SIs
 
 
 def threshold(arr, minval=None, maxval=None, print_message=False):
@@ -56,21 +83,10 @@ def threshold(arr, minval=None, maxval=None, print_message=False):
     return arr
 
 
-def plot_f():
-    import matplotlib.pyplot as plt
-
-    t = np.linspace(0.1, 6, 200)
-
-    USE_SPLINES = False
-
-    plt.plot(t, f(t))
-    plt.show()
-
-
-def f(T1, A=0.95089378, b=1.48087682, Tmin=None, Tmax=None):
-    """Load and evaluate fit or spline interpolation of f,
+def f(T1, A=A, b=B, Tmin=None, Tmax=None):
+    """Evaluate fit of f,
     the function f in the Supplementary Material to
-    Lars Magnus Valnes et al. "Apparent diffusion coefficient [...]" Sci. Rep. 2020
+    Valnes et al. "Apparent diffusion coefficient [...]" Sci. Rep. 2020
     Args:
         T1 (np.array): relaxation time T1 in seconds
         A (float, optional): Fit parameter A. Defaults to 0.95089378.
@@ -84,29 +100,14 @@ def f(T1, A=0.95089378, b=1.48087682, Tmin=None, Tmax=None):
 
     T1 = threshold(T1, minval=Tmin, maxval=Tmax)
 
-    check_T1(T1, mask=None)
 
-    if USE_SPLINES:
-        global f_splines
-        try:
-            retval = f_splines(T1)
-        except NameError:
-            print("Loaded f_splines from pickle file")
-            # dirty workaround: 
-            # Use __file__ to to get install dir of cats  
-            with open(__file__[:-33] + 'constants/f_splines.pkl', 'rb') as input:
-                f_splines = pickle.load(input)
-                # assert T1.max() < 4.8 and T1.min() > 0.2, "spline interpolation invalid outside"
-            retval = f_splines(T1)
-        return retval
-
-    else:
-        retval = A * np.exp(- b * T1)
-        return retval
+    retval = A * np.exp(- b * T1)
+    
+    return retval
 
 
-def f_inverse(f_val, A=0.95089378, b=1.48087682, Tmin=None, Tmax=None):
-    """Load and evaluate fit or spline interpolation of inverse of f
+def f_inverse(f_val, A=A, b=B, Tmin=None, Tmax=None):
+    """evaluate fit of inverse of f
     Args:
         f (np.array): value of the function f
         A (float, optional): Fit parameter A. Defaults to 0.95089378.
@@ -119,28 +120,11 @@ def f_inverse(f_val, A=0.95089378, b=1.48087682, Tmin=None, Tmax=None):
     fmin = f(T1=Tmax)
     fmax = f(T1=Tmin)
 
-    
     f_val = threshold(f_val, minval=fmin, maxval=fmax)
 
-    if USE_SPLINES:
-        global f_inverse_splines
-        try:
-            retval = f_inverse_splines(f_val)
-        except NameError:
-            # dirty workaround: 
-            # Use __file__ to to get install dir of cats 
-            print("Loaded f_splines from pickle file")
-            with open(__file__[:-33] + 'constants/f_inverse_splines.pkl', 'rb') as input:
-                f_inverse_splines = pickle.load(input)
-            retval = f_inverse_splines(f_val)
-        return retval
-    else:
+    t1 = np.log(f_val / A) / (- b)
 
-        t1 = np.log(f_val / A) / (- b)
-
-        # breakpoint()
-
-        return t1
+    return t1
 
 def concentration_T1_relation(T_1_0, T_1_t, r_1=3.2):
     """Compute c in equation (S3) in the Supplementary Material to
@@ -190,8 +174,6 @@ def estimate_T1(S_t, S_0, T_1_0, T_min=None, T_max=None):
         
     T_1_t = f_inverse(f_t, Tmin=T_min, Tmax=T_max)
 
-    # assert np.min(T_1_t[~np.isnan(T_1_t)]) >= 0
-
     return T_1_t
 
 
@@ -219,8 +201,6 @@ def concentration_signal_relation(S_t, S_0, t1_map, mask, T_max=None, threshold_
 
     """
 
-    check_T1(t1_map, mask)
-
     if T_max is not None:
         assert T_min is not None
         # Apply thresholds before feeding T_1 values to f
@@ -235,12 +215,6 @@ def concentration_signal_relation(S_t, S_0, t1_map, mask, T_max=None, threshold_
     assert np.min(SIR[~np.isnan(SIR)]) >= 0    
 
     T_1_t = estimate_T1(S_t=S_t, S_0=S_0, T_1_0=T_1_0, T_min=T_min, T_max=T_max)
-    # try:
-
-    #     assert np.min(T_1_t[~np.isnan(T_1_t)]) >= 0
-    # except AssertionError as e:
-    #     print(np.min(T_1_t[~np.isnan(T_1_t)]))
-    #     raise e
 
     c = concentration_T1_relation(T_1_0=T_1_0, T_1_t=T_1_t, r_1=r_1)
 
@@ -264,101 +238,42 @@ def concentration_signal_relation(S_t, S_0, t1_map, mask, T_max=None, threshold_
     return c
 
 
-def mris_to_concentrations(mri_list, t1_map, T_min=0.2, T_max=4.5, mask=None,
-                            use_splines=False, ignore_numpy_warning=True):
-    """Process a list of raw MRI.
-    Assumes that the first item of <mri_list> contains a baseline MRI (without tracer):
-    mri_list[0]["rel_time"] == 0.
-
-    Args:
-        mri_list (dict): list of dicts containing items
-                        "rel_time" (time rel. to first MRI),
-                        "raw_mri",
-                        "ref_value" (signal in ref region to normalize MRI with,
-                        "filename" (to keep track of filenames for export of concentration later)
-        t1_map (np.array): t1 map (256x256x256 float array)
-        T_min (float, optional): Lower threshold for "allowed" T1 values.
-                        Defaults to T_1_min = 0.2 seconds as in Lars' work
-        T_max (float, optional): Upper threshold for "allowed" T1 values.
-                        Defaults to 4.5 seconds like in Lars' work
-        use_splines (bool, optional): Whether to use spline interpolatation of f and f_inverse instead of fit
-        ignore_numpy_warning (bool, optional): print numpy division by 0 warning
-        mask (np.array): A mask in which the values are checked to be < MAX_T1_IN_SECONDS
-
-    Returns:
-        list: list of dicts containing items
-        "rel_time"
-        "concentration" (256x256x256 float array)
-        "filename"
-    """
-    global USE_SPLINES
-    USE_SPLINES = use_splines
-    global IGNORE_NUMPY_DIVISION_WARNING
-    IGNORE_NUMPY_DIVISION_WARNING = ignore_numpy_warning
-    if IGNORE_NUMPY_DIVISION_WARNING:
-        print("Ignoring numpy division by 0 warning")
-        np.seterr(divide='ignore', invalid='ignore')
-    
-    if t1_map.max() > MAX_T1_IN_SECONDS:
-        print("---------------------------------------------------------")
-        print("Assuming T1 map is in milliseconds, converting to seconds")
-        print("---------------------------------------------------------")
-        t1_map *= 1e-3    
-
-    if np.min(t1_map) < 0.:
-        print("---------------------------------------------------------")
-        print("WARNING: T1 map contains negative values, thresholding")
-        print("---------------------------------------------------------")
-        t1_map = np.where(t1_map < 0, 0, t1_map)
-
-    check_T1(t1_map, mask=mask)    
-
-    assert mri_list[0]["rel_time"] == 0., "baseline mri (at t=0) missing"
-    
-    mri_0 = mri_list[0]["raw_mri"]
-    ref_val_0 = mri_list[0]["ref_value"]
-    
-    S_0 = mri_0 / ref_val_0
-    
-    concentration_images = []
-
-    for mri in mri_list:
-
-        if mask is not None:
-            maskmri = mri["raw_mri"][mask]
-            if maskmri.min() == 0:
-                print(np.where(maskmri == 0, 1, 0).sum(), "/",
-                    maskmri.size, "voxels of T1-weighted MRI in masked region are 0")
-
-        # normalize mri by value in reference region
-        S = mri["raw_mri"] / mri["ref_value"]
-
-        # Check for "unphysical" signal ratios: The signal should not decrease
-        if mask is not None:
-            num_violations = np.sum(np.where((S / S_0)[mask] < 0, 1, 0))
-            if num_violations > 0:
-                print("Thresholding", num_violations, "voxels in mask with SIR < 0 in", mri["filename"])
-        
-        # throw out "unphysical" relative signal increases (S/S_0 < 1)
-        S = np.where(S / S_0 - 1 <= 0, 0, S)
-
-        c = concentration_signal_relation(S_t=S, S_0=S_0, mask=mask,
-                            t1_map=t1_map, T_max=T_max, T_min=T_min)
-
-        #if float(mri[0]) > 0:
-        #    breakpoint()
-        
-        # store as list
-        concentration_images.append({
-            "rel_time": mri["rel_time"],
-            "concentration": c,
-            "filename": mri["filename"]}
-        )
-
-    return concentration_images
-
 
 
 if __name__ == "__main__":
 
-    plot_f()
+    import matplotlib.pyplot as plt
+
+
+    for Npoints in [1024, 4048, 4048 * 2, 4048 * 4]:
+
+        t = np.linspace(0.2, 4, Npoints) * 1e3
+
+        t, f_val = lookup(t)
+
+        f_val_fit=f(t / 1e3)
+
+        print("rel. error between fit and f", np.mean((f_val - f_val_fit) ** 2) / np.mean((f_val) ** 2))
+
+    ax = plt.gca()
+    ax.tick_params(axis = 'both', which = 'major', labelsize = 24)
+    ax.tick_params(axis = 'both', which = 'minor', labelsize = 24)
+    plt.locator_params(axis='y', nbins=6)
+    plt.locator_params(axis='x', nbins=6)
+
+    
+    plt.plot(t, f_val, label="MPRAGE")
+    plt.plot(t, f_val_fit, color="red", label="fit")
+
+
+    plt.xlabel(" T1 [ms]",fontsize=20)
+    plt.ylabel(" f(T1) [1] ", rotation=0,x=-0.0, y=1.1,fontsize=28) 
+    plt.tight_layout()
+    plt.fill_betweenx(f_val, 800,1200 ,facecolor='white',alpha=0.2)
+    plt.fill_betweenx(f_val, 1600,2000 ,facecolor='grey',alpha=0.2)
+    plt.fill_betweenx(f_val, 2900,4000 ,facecolor='b',alpha=0.2)
+
+    # plt.savefig("T1function.png")
+
+    plt.legend()
+    plt.show()
